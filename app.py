@@ -7,7 +7,7 @@ from sklearn.preprocessing import LabelEncoder, StandardScaler
 from sklearn.neighbors import KNeighborsClassifier
 from sklearn.tree import DecisionTreeClassifier
 from sklearn.ensemble import RandomForestClassifier, GradientBoostingClassifier
-from sklearn.metrics import accuracy_score, precision_score, recall_score, f1_score, confusion_matrix, roc_curve, auc, roc_auc_score
+from sklearn.metrics import accuracy_score, precision_score, recall_score, f1_score, confusion_matrix, roc_curve
 from sklearn.linear_model import LinearRegression, Ridge, Lasso
 from sklearn.tree import DecisionTreeRegressor
 from sklearn.cluster import KMeans
@@ -54,13 +54,11 @@ else:
         st.sidebar.error("No data found! Please upload a CSV in the sidebar.")
         st.stop()
 
-# Helper: filter only necessary columns
 def get_categorical_columns(df):
     return [col for col in df.columns if df[col].dtype == 'object']
 
 # --- Sidebar Filters ---
 with st.sidebar.expander("🧲 Filter Data", expanded=False):
-    # Example filters
     age = st.multiselect("Age", sorted(df['Age'].unique()), default=sorted(df['Age'].unique()))
     gender = st.multiselect("Gender", sorted(df['Gender'].unique()), default=sorted(df['Gender'].unique()))
     income = st.multiselect("Monthly Income", sorted(df['Monthly Income'].unique()), default=sorted(df['Monthly Income'].unique()))
@@ -94,9 +92,14 @@ with tabs[0]:
                         title="Income vs Paid Subscription")
     col1.plotly_chart(fig3, use_container_width=True)
 
-    # 4. Device Usage
-    fig4 = px.bar(df['Device'].value_counts().reset_index(), x='index', y='Device',
-                  title="Preferred Devices", labels={'index': 'Device', 'Device': 'Count'})
+    # 4. Device Usage (fixed)
+    device_counts = df['Device'].value_counts().reset_index(name='Count').rename(columns={'index': 'Device'})
+    fig4 = px.bar(
+        device_counts,
+        x='Device', y='Count',
+        title="Preferred Devices",
+        labels={'Device': 'Device', 'Count': 'Count'}
+    )
     col2.plotly_chart(fig4, use_container_width=True)
 
     # 5. Internet Quality
@@ -125,7 +128,9 @@ with tabs[0]:
 
     # 10. Most Used App Features
     feature_counts = pd.Series(','.join(df['Features Used Most']).replace(", ", ",").split(',')).value_counts()
-    fig10 = px.bar(feature_counts[:15], title="Most Used App Features", labels={'index': 'Feature', 'value': 'Count'})
+    feature_counts = feature_counts.reset_index()
+    feature_counts.columns = ['Feature', 'Count']
+    fig10 = px.bar(feature_counts[:15], x='Feature', y='Count', title="Most Used App Features")
     col2.plotly_chart(fig10, use_container_width=True)
 
     st.markdown("---")
@@ -137,30 +142,23 @@ with tabs[1]:
     st.header("Classification Models & Prediction")
     st.markdown("Apply KNN, Decision Tree, Random Forest, Gradient Boosting for predicting Paid Subscription.")
 
-    # Prepare data for classification
     clf_df = df.copy()
     label_cols = ["Paid Subscription"]
-    # Drop columns not usable for quick demo (too many for 1:1 encoding here)
     drop_cols = [
         'Country', 'City', 'Non-Subscription Reasons', 'Features Used Most',
         'Other Apps Used', 'Motivation', 'Learning Goals', 'Preferred Subjects', 
         'Preferred App Features', 'Selection Factors', 'Learning Challenges'
     ]
-    # Remove multi-select/object columns, encode the rest
     clf_df = clf_df.drop(columns=[c for c in drop_cols if c in clf_df.columns], errors='ignore')
-    # Fill NaNs
     clf_df = clf_df.fillna("Unknown")
-    # Label encoding for all categorical except the label
     le_dict = {}
     for col in clf_df.columns:
         if clf_df[col].dtype == 'object' and col != "Paid Subscription":
             le = LabelEncoder()
             clf_df[col] = le.fit_transform(clf_df[col].astype(str))
             le_dict[col] = le
-    # Label encode target
     clf_df['Paid Subscription'] = (clf_df['Paid Subscription'] == 'Yes').astype(int)
 
-    # Features/Target
     X = clf_df.drop(columns=["Paid Subscription"])
     y = clf_df["Paid Subscription"]
     X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.25, random_state=42)
@@ -168,7 +166,6 @@ with tabs[1]:
     X_train_scaled = scaler.fit_transform(X_train)
     X_test_scaled = scaler.transform(X_test)
 
-    # Train models
     models = {
         "KNN": KNeighborsClassifier(n_neighbors=5),
         "Decision Tree": DecisionTreeClassifier(max_depth=6, random_state=0),
@@ -194,7 +191,6 @@ with tabs[1]:
     results_df = pd.DataFrame(results).T.round(3)
     st.dataframe(results_df, use_container_width=True)
 
-    # --- Confusion Matrix ---
     algo = st.selectbox("Show confusion matrix for:", list(models.keys()))
     cm = confusion_matrix(y_test, models[algo].predict(X_test_scaled))
     st.write(f"Confusion Matrix: {algo}")
@@ -202,7 +198,6 @@ with tabs[1]:
         color_continuous_scale="blues", labels=dict(x="Predicted", y="Actual"))
     st.plotly_chart(cm_fig, use_container_width=True)
 
-    # --- ROC Curve ---
     st.markdown("**ROC Curve for all models**")
     fig_roc = go.Figure()
     for name, probs in y_probs.items():
@@ -212,13 +207,11 @@ with tabs[1]:
     fig_roc.update_layout(title='ROC Curve', xaxis_title='False Positive Rate', yaxis_title='True Positive Rate')
     st.plotly_chart(fig_roc, use_container_width=True)
 
-    # --- Predict on new data ---
     st.markdown("#### Predict on new uploaded data (without target variable)")
     uploaded_pred = st.file_uploader("Upload CSV file for prediction (same structure, no Paid Subscription column)", type="csv", key="pred")
     if uploaded_pred:
         try:
             pred_df = pd.read_csv(uploaded_pred)
-            # Label encode using previous dict (naive, for demo)
             for col in X.columns:
                 if col in pred_df.columns and col in le_dict:
                     pred_df[col] = le_dict[col].transform(pred_df[col].astype(str))
@@ -239,7 +232,6 @@ with tabs[2]:
 
     clust_df = df.copy()
     persona_cols = ['Age', 'Gender', 'Monthly Income', 'Occupation', 'Courses Taken Last Year', 'Device']
-    # Label encode
     for col in persona_cols:
         if clust_df[col].dtype == 'object':
             clust_df[col] = LabelEncoder().fit_transform(clust_df[col].astype(str))
@@ -249,7 +241,6 @@ with tabs[2]:
     clust_labels = kmeans.fit_predict(clust_data)
     clust_df['Cluster'] = clust_labels
 
-    # Elbow Chart
     wcss = []
     for i in range(2, 11):
         km = KMeans(n_clusters=i, random_state=0, n_init=10)
@@ -260,7 +251,6 @@ with tabs[2]:
     elbow_fig.update_layout(title="Elbow Chart (Choose best k)", xaxis_title="Number of clusters", yaxis_title="WCSS (Inertia)")
     st.plotly_chart(elbow_fig, use_container_width=True)
 
-    # Persona Table
     st.markdown("#### Customer Personas (Cluster Centers)")
     personas = pd.DataFrame(kmeans.cluster_centers_, columns=persona_cols)
     st.dataframe(personas.round(2), use_container_width=True)
@@ -279,9 +269,7 @@ with tabs[3]:
     support = st.slider("Min support:", 0.01, 0.2, 0.05)
     confidence = st.slider("Min confidence:", 0.2, 1.0, 0.6)
 
-    # Prepare basket format (one-hot) for apriori
     if len(col_options) >= 2:
-        # Build transaction list
         baskets = []
         for idx, row in df[col_options].iterrows():
             items = set()
@@ -291,12 +279,10 @@ with tabs[3]:
                     if opt and opt.lower() not in ['none', 'unknown']:
                         items.add(f"{col}:{opt}")
             baskets.append(list(items))
-        # Convert to DataFrame for apriori
         from mlxtend.preprocessing import TransactionEncoder
         te = TransactionEncoder()
         te_ary = te.fit(baskets).transform(baskets)
         basket_df = pd.DataFrame(te_ary, columns=te.columns_)
-        # Run apriori
         freq = apriori(basket_df, min_support=support, use_colnames=True)
         rules = association_rules(freq, metric="confidence", min_threshold=confidence)
         rules = rules.sort_values("confidence", ascending=False).head(10)
@@ -314,7 +300,6 @@ with tabs[4]:
     st.markdown("Apply Linear, Ridge, Lasso, Decision Tree Regression for actionable insights.")
 
     reg_df = df.copy()
-    # Choose regression targets
     target_map = {
         "Willingness to Spend": ("Willingness to Spend", {'<10':1, '10-20':2, '20-50':3, '50-100':4, '>100':5}),
         "Satisfaction Level": ("Satisfaction Level", None)
@@ -324,19 +309,16 @@ with tabs[4]:
     reg_y = reg_df[target_col]
     if mapping:
         reg_y = reg_y.map(mapping)
-    # Features
     reg_features = ['Age', 'Gender', 'Education', 'Monthly Income', 'Occupation', 'Device',
                     'Internet Quality', 'Courses Taken Last Year', 'App Comfort Level']
     for col in reg_features:
         if reg_df[col].dtype == 'object':
             reg_df[col] = LabelEncoder().fit_transform(reg_df[col].astype(str))
     reg_X = reg_df[reg_features]
-    # Split/scale
     X_train, X_test, y_train, y_test = train_test_split(reg_X, reg_y, test_size=0.25, random_state=42)
     scaler = StandardScaler()
     X_train_scaled = scaler.fit_transform(X_train)
     X_test_scaled = scaler.transform(X_test)
-    # Fit models
     reg_models = {
         "Linear Regression": LinearRegression(),
         "Ridge Regression": Ridge(alpha=1.0),
@@ -355,7 +337,6 @@ with tabs[4]:
         preds[name] = y_pred
     st.dataframe(pd.DataFrame(reg_results).T.round(3), use_container_width=True)
 
-    # Scatter plot
     st.markdown("#### Actual vs Predicted (Test set)")
     for name, y_pred in preds.items():
         fig = px.scatter(x=y_test, y=y_pred, labels={'x':"Actual", 'y':"Predicted"},
@@ -363,7 +344,6 @@ with tabs[4]:
         st.plotly_chart(fig, use_container_width=True)
         st.caption(f"{name}: Points along diagonal indicate good fit. Use R² above to compare models.")
 
-    # Feature importance for tree models
     st.markdown("#### Feature Importances (Tree-based Models)")
     for name in ["Decision Tree"]:
         imp = reg_models[name].feature_importances_
@@ -371,7 +351,5 @@ with tabs[4]:
         st.plotly_chart(fig, use_container_width=True)
         st.caption(f"{name}: Higher bars indicate more impact on prediction.")
 
-# ---- END ----
 st.markdown("---")
 st.markdown("Made with ❤️ using Streamlit | For MBA Data Analytics & Stakeholder Demo")
-
