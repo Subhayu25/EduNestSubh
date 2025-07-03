@@ -135,20 +135,32 @@ with tabs[1]:
     c1, c2 = st.columns(2)
     c1.plotly_chart(px.histogram(df, x="Age", color="Age", title="Age Distribution", template=tpl), use_container_width=True)
     c2.plotly_chart(px.pie(df, names="Gender", title="Gender Distribution", template=tpl), use_container_width=True)
-    c1.plotly_chart(px.histogram(df, x="Monthly Income", color="Paid Subscription", barmode="group", title="Income vs Subscription", template=tpl), use_container_width=True)
+    c1.plotly_chart(px.histogram(df, x="Monthly Income", color="Paid Subscription", barmode="group",
+                                 title="Income vs Subscription", template=tpl), use_container_width=True)
     dev_counts = df['Device'].value_counts().reset_index(name='Count').rename(columns={'index':'Device'})
     c2.plotly_chart(px.bar(dev_counts, x="Device", y="Count", title="Preferred Devices", template=tpl), use_container_width=True)
     st.plotly_chart(px.pie(df, names="Internet Quality", title="Internet Quality", template=tpl), use_container_width=True)
     st.plotly_chart(px.bar(df, x="Age", color="Paid Subscription", title="Subscription by Age", template=tpl), use_container_width=True)
-    # Funnel
-    funnel = go.Figure(go.Funnel(y=["Ad Exposed","Signed Up","Subscribed"], x=[len(df), df['Signed Up'].value_counts().get('Yes',0), df['Paid Subscription'].value_counts().get('Yes',0)]))
-    st.plotly_chart(funnel, use_container_width=True)
-    # Map
-    country_counts = df['Country'].value_counts().reset_index(name='Count').rename(columns={'index':'Country'})
-    st.plotly_chart(px.choropleth(country_counts, locations='Country', locationmode='country names', color='Count', title="Users by Country", template=tpl), use_container_width=True)
+    # Funnel (guarded)
+    if 'Signed Up' in df.columns and 'Paid Subscription' in df.columns:
+        funnel = go.Figure(go.Funnel(
+            y=["Ad Exposed","Signed Up","Subscribed"],
+            x=[len(df), df['Signed Up'].value_counts().get('Yes',0), df['Paid Subscription'].value_counts().get('Yes',0)]
+        ))
+        st.plotly_chart(funnel, use_container_width=True)
+    else:
+        st.warning("Funnel chart requires 'Signed Up' and 'Paid Subscription' columns.")
+    # Map (guarded)
+    if 'Country' in df.columns:
+        country_counts = df['Country'].value_counts().reset_index(name='Count').rename(columns={'index':'Country'})
+        st.plotly_chart(px.choropleth(country_counts, locations='Country', locationmode='country names',
+                                      color='Count', title="Users by Country", template=tpl), use_container_width=True)
+    else:
+        st.warning("Geographic map requires a 'Country' column.")
     # Correlation
     corr = df.select_dtypes(include=[np.number]).corr()
-    st.plotly_chart(px.imshow(corr, text_auto=True, color_continuous_scale="RdBu_r", title="Correlation Heatmap", template=tpl), use_container_width=True)
+    st.plotly_chart(px.imshow(corr, text_auto=True, color_continuous_scale="RdBu_r",
+                              title="Correlation Heatmap", template=tpl), use_container_width=True)
     st.markdown("---")
     st.download_button("Download Filtered Data (CSV)", df.to_csv(index=False), "filtered_data.csv", "text/csv")
 
@@ -170,7 +182,9 @@ with tabs[3]:
     st.header("🧩 Classification Models")
     st.info("Predict Paid Subscription. Upload new data to predict.")
     clf = df.copy().fillna("Unknown")
-    drops = ["Country","City","Non-Subscription Reasons","Features Used Most","Other Apps Used","Motivation","Learning Goals","Preferred Subjects","Preferred App Features","Selection Factors","Learning Challenges"]
+    drops = ["Country","City","Non-Subscription Reasons","Features Used Most","Other Apps Used",
+             "Motivation","Learning Goals","Preferred Subjects","Preferred App Features",
+             "Selection Factors","Learning Challenges"]
     clf.drop(columns=[c for c in drops if c in clf], inplace=True)
     le_map = {}
     for col in clf.select_dtypes(include='object'):
@@ -207,7 +221,8 @@ with tabs[3]:
     st.dataframe(pd.DataFrame(results).T.round(3))
     sel = st.selectbox("Confusion Matrix", list(models.keys()))
     cm = confusion_matrix(y_test, models[sel].predict(X_test_s))
-    st.plotly_chart(px.imshow(cm, text_auto=True, labels=dict(x="Pred",y="True"), title=f"{sel} Confusion Matrix", template=tpl), use_container_width=True)
+    st.plotly_chart(px.imshow(cm, text_auto=True, labels=dict(x="Pred",y="True"),
+                              title=f"{sel} Confusion Matrix", template=tpl), use_container_width=True)
     roc_fig = go.Figure()
     for name, p in probs.items():
         fpr, tpr, _ = roc_curve(y_test, p)
@@ -237,7 +252,8 @@ with tabs[4]:
     km = KMeans(n_clusters=k, random_state=0, n_init=10).fit(cdf[cols])
     cdf['Cluster'] = km.labels_
     inertias = [KMeans(n_clusters=i, random_state=0, n_init=10).fit(cdf[cols]).inertia_ for i in range(2,11)]
-    st.plotly_chart(px.line(x=list(range(2,11)), y=inertias, title="Elbow Chart", markers=True, template=tpl), use_container_width=True)
+    st.plotly_chart(px.line(x=list(range(2,11)), y=inertias, title="Elbow Chart", markers=True,
+                             template=tpl), use_container_width=True)
     centers = pd.DataFrame(km.cluster_centers_, columns=cols)
     st.dataframe(centers.round(2))
     st.download_button("Download Clustered Data", cdf.to_csv(index=False), "clustered.csv", "text/csv")
@@ -246,7 +262,9 @@ with tabs[4]:
 with tabs[5]:
     st.header("🔗 Association Rule Mining")
     st.info("Discover top-10 rules from multi-select columns.")
-    multi_cols = ['Motivation','Learning Goals','Preferred Subjects','Preferred App Features','Selection Factors','Learning Challenges','Non-Subscription Reasons','Features Used Most','Other Apps Used']
+    multi_cols = ['Motivation','Learning Goals','Preferred Subjects','Preferred App Features',
+                  'Selection Factors','Learning Challenges','Non-Subscription Reasons',
+                  'Features Used Most','Other Apps Used']
     sel_cols = st.multiselect("Columns", multi_cols, default=multi_cols[:2])
     sup = st.slider("Min Support", 0.01, 0.2, 0.05)
     conf = st.slider("Min Confidence", 0.2, 1.0, 0.6)
