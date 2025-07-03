@@ -326,36 +326,80 @@ with tabs[5]:
 with tabs[6]:
     st.header("📈 Regression Insights")
     st.info("Run regression models on Spend or Satisfaction.")
-    targets = {"Spend":"Willingness to Spend","Satisfaction":"Satisfaction Level"}
-    choice = st.selectbox("Target", list(targets.keys()))
-    ycol = targets[choice]
-    if ycol == "Willingness to Spend":
-        y = df[ycol].map({'<10':1,'10-20':2,'20-50':3,'50-100':4,'>100':5})
-    else:
-        y = df[ycol]
-    X = df[['Age','Gender','Education','Monthly Income','Occupation','Device','Internet Quality','Courses Taken Last Year','App Comfort Level']].copy()
-    for c in X.select_dtypes(include='object'):
-        X[c] = LabelEncoder().fit_transform(X[c].astype(str))
-    X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.25, random_state=42)
-    sc = StandardScaler()
-    X_train_s, X_test_s = sc.fit_transform(X_train), sc.transform(X_test)
-    regmods = {
-        "Linear":LinearRegression(),
-        "Ridge":Ridge(),
-        "Lasso":Lasso(alpha=0.01),
-        "Tree":DecisionTreeRegressor(max_depth=6, random_state=0)
+
+    # Map of display name → actual column
+    targets = {
+        "Spend": "Willingness to Spend",
+        "Satisfaction": "Satisfaction Level"
     }
-    out, preds = {}, {}
-    for name, m in regmods.items():
-        m.fit(X_train_s, y_train)
-        p = m.predict(X_test_s)
-        out[name] = {"Train R2":m.score(X_train_s, y_train),"Test R2":m.score(X_test_s, y_test)}
-        preds[name] = p
-    st.dataframe(pd.DataFrame(out).T.round(3))
-    for name, p in preds.items():
-        st.plotly_chart(px.scatter(x=y_test, y=p, labels={'x':'Actual','y':'Predicted'}, title=f"{name} Actual vs Predicted", template=tpl), use_container_width=True)
-    imp = regmods["Tree"].feature_importances_
-    st.plotly_chart(px.bar(x=X.columns, y=imp, title="Tree Feature Importances", template=tpl), use_container_width=True)
+    choice = st.selectbox("Select target to model", list(targets.keys()))
+    ycol = targets[choice]
+
+    # Guard against missing column
+    if ycol not in df.columns:
+        st.warning(f"⚠️ Column `{ycol}` not found in the dataset, so regression is unavailable.")
+    else:
+        # Build y (with mapping if Spend)
+        if ycol == "Willingness to Spend":
+            # only map the known buckets; unseen values become NaN
+            mapping = {'<10':1,'10-20':2,'20-50':3,'50-100':4,'>100':5}
+            y = df[ycol].map(mapping)
+        else:
+            y = df[ycol]
+
+        # Drop any rows where y is missing after mapping
+        valid = y.notna()
+        X_df = df.loc[valid, [
+            'Age','Gender','Education','Monthly Income','Occupation',
+            'Device','Internet Quality','Courses Taken Last Year','App Comfort Level'
+        ]].copy()
+        y = y[valid]
+
+        # Encode & split
+        for c in X_df.select_dtypes(include='object'):
+            X_df[c] = LabelEncoder().fit_transform(X_df[c].astype(str))
+        X_train, X_test, y_train, y_test = train_test_split(
+            X_df, y, test_size=0.25, random_state=42
+        )
+        scaler = StandardScaler()
+        X_tr, X_te = scaler.fit_transform(X_train), scaler.transform(X_test)
+
+        # Train multiple regressors
+        regmods = {
+            "Linear": LinearRegression(),
+            "Ridge": Ridge(),
+            "Lasso": Lasso(alpha=0.01),
+            "Tree": DecisionTreeRegressor(max_depth=6, random_state=0)
+        }
+        results, preds = {}, {}
+        for name, m in regmods.items():
+            m.fit(X_tr, y_train)
+            p = m.predict(X_te)
+            results[name] = {
+                "Train R2": m.score(X_tr, y_train),
+                "Test R2": m.score(X_te, y_test)
+            }
+            preds[name] = p
+
+        # Show R² table
+        st.dataframe(pd.DataFrame(results).T.round(3))
+
+        # Plot Actual vs Predicted
+        for name, p in preds.items():
+            fig = px.scatter(
+                x=y_test, y=p,
+                labels={'x':'Actual','y':'Predicted'},
+                title=f"{name} Actual vs Predicted"
+            )
+            st.plotly_chart(fig, use_container_width=True)
+
+        # Feature importances for tree
+        imp = regmods["Tree"].feature_importances_
+        fig_imp = px.bar(
+            x=X_df.columns, y=imp,
+            title="Decision Tree Feature Importances"
+        )
+        st.plotly_chart(fig_imp, use_container_width=True)
 
 # ===== 8. DOWNLOAD PPT SUMMARY =====
 with tabs[7]:
