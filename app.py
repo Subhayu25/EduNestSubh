@@ -1,356 +1,367 @@
+import time
+import io
+import requests
 import streamlit as st
 import pandas as pd
 import numpy as np
-from io import StringIO
+from pptx import Presentation
 from sklearn.model_selection import train_test_split
 from sklearn.preprocessing import LabelEncoder, StandardScaler
 from sklearn.neighbors import KNeighborsClassifier
-from sklearn.tree import DecisionTreeClassifier
+from sklearn.tree import DecisionTreeClassifier, DecisionTreeRegressor
 from sklearn.ensemble import RandomForestClassifier, GradientBoostingClassifier
-from sklearn.metrics import accuracy_score, precision_score, recall_score, f1_score, confusion_matrix, roc_curve
 from sklearn.linear_model import LinearRegression, Ridge, Lasso
-from sklearn.tree import DecisionTreeRegressor
+from sklearn.metrics import (
+    accuracy_score, precision_score, recall_score, f1_score,
+    confusion_matrix, roc_curve
+)
 from sklearn.cluster import KMeans
 import plotly.express as px
 import plotly.graph_objects as go
 from mlxtend.frequent_patterns import apriori, association_rules
 
-st.set_page_config(page_title="EduNest EdTech Analytics", layout="wide")
+# ----------------- PAGE CONFIG -----------------
+st.set_page_config(page_title="EduNest - EdTech Analytics Dashboard", layout="wide")
+start_time = time.time()
 
-# ------------- LOGO AND BRANDING -------------
+# --------------- CUSTOM CSS & ANIMATIONS ---------------
+st.markdown(
+    """
+    <style>
+    body { background-color: #1e222e; color: #eee; }
+    .stButton>button { border-radius:12px; box-shadow:2px 2px 5px rgba(0,0,0,0.5); }
+    </style>
+    """,
+    unsafe_allow_html=True
+)
+
+# ---------- LOGO, TITLE, CAPTION ----------
 logo_path = "logo.png"
-st.markdown("<style>body {background-color: #1e222e !important;}</style>", unsafe_allow_html=True)
-col_logo, col_title = st.columns([1,7])
+col_logo, col_title = st.columns([1, 7])
 with col_logo:
-    st.image(logo_path, width=110)
+    st.image(logo_path, width=100)
 with col_title:
-    st.title("EduNest - EdTech Analytics Dashboard")
-    st.caption("MBA Data Analytics Project • Team Subhayu | Unlocking end-to-end learner insights")
+    st.title("EduNest Survey Insights Dashboard")
+    st.caption("EduNest • Unlocking the Power of Learner Analytics")
 st.markdown("---")
 
-# ------------ DATA QUALITY CHECK -------------
+# ----------- DATA LOADING & QUALITY ------------
 @st.cache_data
-def load_data(file_path):
+def load_data(path):
     try:
-        df = pd.read_csv(file_path)
-    except Exception:
-        df = None
-    return df
+        return pd.read_csv(path)
+    except:
+        return None
 
 st.sidebar.header("🔗 Data Source")
-uploaded = st.sidebar.file_uploader("Upload new survey data (CSV)", type=["csv"], help="You can update your dashboard live by uploading a new file")
+uploaded = st.sidebar.file_uploader("Upload survey CSV", type="csv", help="Upload a new CSV to refresh data")
 if uploaded:
     df = pd.read_csv(uploaded)
-    st.sidebar.success("File uploaded and in use!")
+    st.sidebar.success("Using uploaded data")
 else:
     df = load_data("data/EduTech_Survey_Synthetic.csv")
-    if df is not None:
-        st.sidebar.info("Using default data from repo.")
-    else:
-        st.sidebar.error("No data found! Please upload a CSV in the sidebar.")
+    if df is None:
+        st.sidebar.error("No data found! Please upload a CSV.")
         st.stop()
+    else:
+        st.sidebar.info("Using default data from repo")
 
-# Show data warnings
+# Data quality & automated alerts
 n_missing = df.isnull().sum().sum()
-n_outliers = int((np.abs((df.select_dtypes(include=[np.number]) - df.select_dtypes(include=[np.number]).mean())/df.select_dtypes(include=[np.number]).std()) > 4).sum().sum())
-if n_missing > 0 or n_outliers > 0:
-    st.warning(f"⚠️ Data Quality: {n_missing} missing values, {n_outliers} detected outlier points in numeric features. Review for best analysis.")
+numeric = df.select_dtypes(include=[np.number])
+n_outliers = int(((numeric - numeric.mean()).abs() / numeric.std() > 4).sum().sum())
+sub_rate = 100 * df['Paid Subscription'].value_counts(normalize=True).get('Yes', 0)
+threshold_sub = 30
+if n_missing or n_outliers:
+    st.warning(f"⚠️ Data Quality: {n_missing} missing values, {n_outliers} outliers detected.")
 else:
-    st.success("✅ Data Quality: No missing values, data ready for analysis.")
+    st.success("✅ Data Quality: Clean")
 
-# ------------- SIDEBAR FILTERS --------------
-with st.sidebar.expander("🧲 Filter Data (applies to all tabs)", expanded=False):
-    st.write("Tip: Use filters to drill down insights by segment/persona.")
-    age = st.multiselect("Age", sorted(df['Age'].unique()), default=sorted(df['Age'].unique()))
-    gender = st.multiselect("Gender", sorted(df['Gender'].unique()), default=sorted(df['Gender'].unique()))
-    income = st.multiselect("Monthly Income", sorted(df['Monthly Income'].unique()), default=sorted(df['Monthly Income'].unique()))
-    df = df[df['Age'].isin(age) & df['Gender'].isin(gender) & df['Monthly Income'].isin(income)]
+if sub_rate < threshold_sub:
+    st.error(f"🚨 Alert: Subscription rate is only {sub_rate:.1f}% (< {threshold_sub}%)!")
+else:
+    st.info(f"Subscription rate: {sub_rate:.1f}%")
 
-# --------- TABS STRUCTURE & HELP ----------
+# ------------ SIDEBAR FILTERS -------------
+with st.sidebar.expander("🧲 Filter Data", expanded=False):
+    st.write("Drill down by demographics")
+    sel_age = st.multiselect("Age", sorted(df['Age'].unique()), default=sorted(df['Age'].unique()))
+    sel_gen = st.multiselect("Gender", sorted(df['Gender'].unique()), default=sorted(df['Gender'].unique()))
+    sel_inc = st.multiselect("Monthly Income", sorted(df['Monthly Income'].unique()), default=sorted(df['Monthly Income'].unique()))
+    df = df[df['Age'].isin(sel_age) & df['Gender'].isin(sel_gen) & df['Monthly Income'].isin(sel_inc)]
+
+# ---------------- TABS ----------------
 tabs = st.tabs([
-    "Executive Summary", 
-    "Data Visualisation", 
-    "Classification", 
-    "Clustering", 
-    "Association Rule Mining", 
-    "Regression Insights",
+    "Executive Summary",
+    "Data Visualisation",
+    "Time-Series Analysis",
+    "Classification",
+    "Clustering",
+    "Association Rules",
+    "Regression",
+    "Download PPT",
     "Feedback"
 ])
 
-# ===== 1. EXECUTIVE SUMMARY (AUTO & STATIC) =====
+# ===== 1. EXECUTIVE SUMMARY =====
 with tabs[0]:
-    st.subheader("📋 Executive Summary: Key Insights")
-    st.info("""
-    - Majority of users are aged 18-34, and students dominate signups.
-    - Working professionals spend more on subscriptions, but students are more likely to sign up.
-    - Paid subscriptions are highly correlated with App Comfort Level and online learning frequency.
-    - Most users access via smartphones, especially in evenings.
-    - Top challenges: Time management, lack of motivation.
-    - Users prefer apps with quizzes, live sessions, and personalized content.
-    - Data reveals clear segments for strategic targeting and channel optimization.
-    """)
-    st.write("These insights are auto-generated from your latest uploaded dataset and updated filters.")
+    st.subheader("📋 Executive Summary")
+    st.info(f"""
+- **Subscription Rate:** {sub_rate:.1f}%  
+- **Avg Satisfaction:** {df['Satisfaction Level'].mean():.2f}/5  
+- **Avg Comfort:** {df['App Comfort Level'].mean():.2f}/5  
+- **Top Device:** {df['Device'].mode()[0]}  
+- **Avg Free Trial Willingness:** {df['Free Trial Willingness'].mean():.2f}/5  
+""")
 
-    # Auto-insights sample (top-3 by group, quick stats)
-    st.markdown("#### Live Data Highlights")
-    st.metric("Paid Subscription Rate", f"{100*df['Paid Subscription'].value_counts(normalize=True).get('Yes',0):.1f}%")
-    st.metric("Avg. Satisfaction Level", f"{df['Satisfaction Level'].mean():.2f}/5")
-    st.metric("Top Device Used", df['Device'].mode()[0])
-    st.metric("Most Popular Age Group", df['Age'].mode()[0])
-    st.metric("Courses Taken (avg)", f"{pd.to_numeric(df['Courses Taken Last Year'], errors='coerce').mean():.1f}")
-    st.caption("Want to add your own? Just edit this section.")
-
-# ===== 2. DATA VISUALISATION TAB =====
+# ===== 2. DATA VISUALISATION =====
 with tabs[1]:
-    st.header("📊 Data Visualisation & Descriptive Insights")
-    st.info("Explore complex insights. Hover on any chart for more detail. Data filters are applied live.")
+    st.header("📊 Data Visualisation")
+    st.info("Explore interactive charts. Use the theme toggle and filters.")
+    theme = st.radio("Theme", ["Light", "Dark"], horizontal=True)
+    tpl = "plotly_white" if theme == "Light" else "plotly_dark"
 
-    col1, col2 = st.columns(2)
-    fig = px.histogram(df, x="Age", title="Age Distribution", color="Age")
-    col1.plotly_chart(fig, use_container_width=True)
-    fig2 = px.pie(df, names="Gender", title="Gender Distribution")
-    col2.plotly_chart(fig2, use_container_width=True)
-    fig3 = px.histogram(df, x="Monthly Income", color="Paid Subscription", barmode='group', title="Income vs Paid Subscription")
-    col1.plotly_chart(fig3, use_container_width=True)
-    device_counts = df['Device'].value_counts().reset_index(name='Count').rename(columns={'index': 'Device'})
-    fig4 = px.bar(device_counts, x='Device', y='Count', title="Preferred Devices", labels={'Device': 'Device', 'Count': 'Count'})
-    col2.plotly_chart(fig4, use_container_width=True)
-    fig5 = px.pie(df, names="Internet Quality", title="Internet Connection Quality")
-    col1.plotly_chart(fig5, use_container_width=True)
-    fig6 = px.bar(df, x="Age", color="Paid Subscription", title="Subscription by Age")
-    col2.plotly_chart(fig6, use_container_width=True)
-    occ_sat = df.groupby("Occupation")["Satisfaction Level"].mean().reset_index()
-    fig7 = px.bar(occ_sat, x="Occupation", y="Satisfaction Level", title="Avg Satisfaction by Occupation")
-    col1.plotly_chart(fig7, use_container_width=True)
-    sat_gender = df.groupby(["Monthly Income", "Gender"])["Satisfaction Level"].mean().reset_index()
-    fig8 = px.bar(sat_gender, x="Monthly Income", y="Satisfaction Level", color="Gender", barmode="group", title="Avg Satisfaction by Income & Gender")
-    col2.plotly_chart(fig8, use_container_width=True)
-    fig9 = px.histogram(df, x="Courses Taken Last Year", color="Paid Subscription", barmode="group", title="Courses Taken vs Subscription")
-    col1.plotly_chart(fig9, use_container_width=True)
-    feature_counts = pd.Series(','.join(df['Features Used Most']).replace(", ", ",").split(',')).value_counts()
-    feature_counts = feature_counts.reset_index()
-    feature_counts.columns = ['Feature', 'Count']
-    fig10 = px.bar(feature_counts[:15], x='Feature', y='Count', title="Most Used App Features")
-    col2.plotly_chart(fig10, use_container_width=True)
+    with st.expander("📖 How to Use"):
+        st.write("""
+- Sidebar filters apply globally.  
+- Hover for details.  
+- Download data or PPT summary.  
+""")
 
-    st.markdown("### 📈 Correlation Heatmap (numeric features only)")
-    with st.expander("Show Correlation Heatmap (See how features move together)", expanded=False):
-        num_df = df.copy()
-        for col in num_df.columns:
-            if num_df[col].dtype == 'object':
-                try:
-                    num_df[col] = LabelEncoder().fit_transform(num_df[col].astype(str))
-                except Exception:
-                    pass
-        corr = num_df.corr()
-        fig_corr = px.imshow(corr, text_auto=True, color_continuous_scale="RdBu_r", aspect="auto", title="Correlation Heatmap")
-        st.plotly_chart(fig_corr, use_container_width=True)
-        st.caption("Interpretation: Values close to 1/-1 show strong positive/negative correlation. 0 = no linear relationship.")
+    # KPI Cards
+    k1, k2, k3, k4 = st.columns(4)
+    k1.metric("Subscription Rate", f"{sub_rate:.1f}%")
+    k2.metric("Avg Satisfaction", f"{df['Satisfaction Level'].mean():.2f}/5")
+    k3.metric("Avg Comfort", f"{df['App Comfort Level'].mean():.2f}/5")
+    k4.metric("Avg Free Trial", f"{df['Free Trial Willingness'].mean():.2f}/5")
+
+    # Plots
+    c1, c2 = st.columns(2)
+    figs = [
+        px.histogram(df, x="Age", color="Age", title="Age Distribution", template=tpl),
+        px.pie(df, names="Gender", title="Gender Distribution", template=tpl),
+        px.histogram(df, x="Monthly Income", color="Paid Subscription", barmode="group", title="Income vs Subscription", template=tpl),
+        px.bar(df['Device'].value_counts().reset_index(name='Count').rename(columns={'index':'Device'}), x="Device", y="Count", title="Preferred Devices", template=tpl)
+    ]
+    for i, fig in enumerate(figs):
+        (c1 if i % 2 == 0 else c2).plotly_chart(fig, use_container_width=True)
+
+    st.plotly_chart(px.pie(df, names="Internet Quality", title="Internet Quality", template=tpl), use_container_width=True)
+    st.plotly_chart(px.bar(df, x="Age", color="Paid Subscription", title="Subscription by Age", template=tpl), use_container_width=True)
+    st.plotly_chart(px.bar(df.groupby("Occupation")["Satisfaction Level"].mean().reset_index(), x="Occupation", y="Satisfaction Level", title="Satisfaction by Occupation", template=tpl), use_container_width=True)
+    st.plotly_chart(go.Figure(go.Funnel(y=["Exposed", "Signed Up", "Subscribed"], x=[len(df), df['Signed Up'].value_counts().get('Yes', 0), df['Paid Subscription'].value_counts().get('Yes', 0)])), use_container_width=True)
+    st.plotly_chart(px.choropleth(df['Country'].value_counts().reset_index(name='Count').rename(columns={'index':'Country'}), locations='Country', locationmode='country names', color='Count', title="Users by Country", template=tpl), use_container_width=True)
+
+    # Correlation heatmap
+    num_df = df.select_dtypes(include=[np.number]).copy()
+    corr = num_df.corr()
+    st.plotly_chart(px.imshow(corr, text_auto=True, color_continuous_scale="RdBu_r", title="Correlation Heatmap", template=tpl), use_container_width=True)
 
     st.markdown("---")
-    st.write("Download current filtered data as CSV. For PDF reports, use your browser's 'Print to PDF' option.")
-    st.download_button("Download CSV", df.to_csv(index=False), "filtered_data.csv", "text/csv")
+    st.download_button("Download Filtered Data", df.to_csv(index=False), "filtered_data.csv", "text/csv")
 
-# === 3. CLASSIFICATION TAB ===
+# ===== 3. TIME-SERIES ANALYSIS =====
 with tabs[2]:
-    st.header("🧩 Classification Models & Prediction")
-    st.info("Predict Paid Subscription using ML. See confusion matrix and ROC. You can upload new data for prediction.")
+    st.header("⏱️ Time-Series Analysis")
+    if 'Timestamp' in df.columns:
+        df['Timestamp'] = pd.to_datetime(df['Timestamp'])
+        ts_df = df.set_index('Timestamp').resample('D').agg({
+            'Signed Up': lambda x: (x == "Yes").sum(),
+            'Paid Subscription': lambda x: (x == "Yes").sum()
+        }).rename(columns={'Signed Up': 'Daily Signups', 'Paid Subscription': 'Daily Subscriptions'})
+        fig_ts = px.line(ts_df, x=ts_df.index, y=['Daily Signups', 'Daily Subscriptions'], title="Daily Signups & Subscriptions", template=tpl)
+        st.plotly_chart(fig_ts, use_container_width=True)
+    else:
+        st.warning("No 'Timestamp' column found for time-series analysis.")
 
-    clf_df = df.copy()
-    drop_cols = [
-        'Country', 'City', 'Non-Subscription Reasons', 'Features Used Most',
-        'Other Apps Used', 'Motivation', 'Learning Goals', 'Preferred Subjects', 
-        'Preferred App Features', 'Selection Factors', 'Learning Challenges'
-    ]
-    clf_df = clf_df.drop(columns=[c for c in drop_cols if c in clf_df.columns], errors='ignore')
-    clf_df = clf_df.fillna("Unknown")
-    le_dict = {}
-    for col in clf_df.columns:
-        if clf_df[col].dtype == 'object' and col != "Paid Subscription":
+# ===== 4. CLASSIFICATION =====
+with tabs[3]:
+    st.header("🧩 Classification")
+    st.info("Predict Paid Subscription. Upload new data to predict.")
+    clf = df.copy().fillna("Unknown")
+    drops = ["Country", "City", "Non-Subscription Reasons", "Features Used Most", "Other Apps Used", "Motivation", "Learning Goals", "Preferred Subjects", "Preferred App Features", "Selection Factors", "Learning Challenges"]
+    clf.drop(columns=[c for c in drops if c in clf], inplace=True)
+    encoders = {}
+    for col in clf.select_dtypes(include='object'):
+        if col != "Paid Subscription":
             le = LabelEncoder()
-            clf_df[col] = le.fit_transform(clf_df[col].astype(str))
-            le_dict[col] = le
-    clf_df['Paid Subscription'] = (clf_df['Paid Subscription'] == 'Yes').astype(int)
-    X = clf_df.drop(columns=["Paid Subscription"])
-    y = clf_df["Paid Subscription"]
+            clf[col] = le.fit_transform(clf[col].astype(str))
+            encoders[col] = le
+    clf["Paid Subscription"] = (clf["Paid Subscription"] == "Yes").astype(int)
+    X = clf.drop("Paid Subscription", axis=1)
+    y = clf["Paid Subscription"]
     X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.25, random_state=42)
     scaler = StandardScaler()
-    X_train_scaled = scaler.fit_transform(X_train)
-    X_test_scaled = scaler.transform(X_test)
+    X_train_s, X_test_s = scaler.fit_transform(X_train), scaler.transform(X_test)
     models = {
-        "KNN": KNeighborsClassifier(n_neighbors=5),
+        "KNN": KNeighborsClassifier(),
         "Decision Tree": DecisionTreeClassifier(max_depth=6, random_state=0),
         "Random Forest": RandomForestClassifier(n_estimators=60, random_state=0),
         "GBRT": GradientBoostingClassifier(n_estimators=60, random_state=0)
     }
     results = {}
-    y_probs = {}
+    probs = {}
     for name, model in models.items():
-        model.fit(X_train_scaled, y_train)
-        y_pred = model.predict(X_test_scaled)
-        y_prob = model.predict_proba(X_test_scaled)[:,1]
+        model.fit(X_train_s, y_train)
+        preds = model.predict(X_test_s)
+        prob = model.predict_proba(X_test_s)[:, 1]
         results[name] = {
-            "Train Acc": accuracy_score(y_train, model.predict(X_train_scaled)),
-            "Test Acc": accuracy_score(y_test, y_pred),
-            "Precision": precision_score(y_test, y_pred),
-            "Recall": recall_score(y_test, y_pred),
-            "F1": f1_score(y_test, y_pred)
+            "Train Acc": accuracy_score(y_train, model.predict(X_train_s)),
+            "Test Acc": accuracy_score(y_test, preds),
+            "Precision": precision_score(y_test, preds),
+            "Recall": recall_score(y_test, preds),
+            "F1": f1_score(y_test, preds)
         }
-        y_probs[name] = y_prob
-    st.dataframe(pd.DataFrame(results).T.round(3), use_container_width=True)
+        probs[name] = prob
+    st.dataframe(pd.DataFrame(results).T.round(3))
+    sel = st.selectbox("Confusion Matrix", list(models.keys()))
+    cm = confusion_matrix(y_test, models[sel].predict(X_test_s))
+    st.plotly_chart(px.imshow(cm, text_auto=True, labels=dict(x="Pred", y="True"), title=f"{sel} Confusion Matrix", template=tpl), use_container_width=True)
+    roc_fig = go.Figure()
+    for name, p in probs.items():
+        fpr, tpr, _ = roc_curve(y_test, p)
+        roc_fig.add_trace(go.Scatter(x=fpr, y=tpr, mode='lines', name=name))
+    roc_fig.add_trace(go.Scatter(x=[0,1], y=[0,1], mode='lines', name='Random', line=dict(dash='dash')))
+    st.plotly_chart(roc_fig, use_container_width=True)
+    up = st.file_uploader("Upload CSV to Predict", type="csv", key="pred_up")
+    if up:
+        pdf = pd.read_csv(up)
+        for col, le in encoders.items():
+            if col in pdf:
+                pdf[col] = le.transform(pdf[col].astype(str))
+        p_s = scaler.transform(pdf[X.columns])
+        pdf["Predicted Subscription"] = np.where(models[sel].predict(p_s) == 1, "Yes", "No")
+        st.dataframe(pdf.head())
+        st.download_button("Download Predictions", pdf.to_csv(index=False), "predictions.csv", "text/csv")
 
-    algo = st.selectbox("Show confusion matrix for:", list(models.keys()))
-    cm = confusion_matrix(y_test, models[algo].predict(X_test_scaled))
-    st.write(f"Confusion Matrix: {algo}")
-    cm_fig = px.imshow(cm, text_auto=True, x=["No", "Yes"], y=["No", "Yes"], color_continuous_scale="blues", labels=dict(x="Predicted", y="Actual"))
-    st.plotly_chart(cm_fig, use_container_width=True)
-    st.markdown("**ROC Curve for all models**")
-    fig_roc = go.Figure()
-    for name, probs in y_probs.items():
-        fpr, tpr, _ = roc_curve(y_test, probs)
-        fig_roc.add_trace(go.Scatter(x=fpr, y=tpr, mode='lines', name=name, line_shape='linear'))
-    fig_roc.add_trace(go.Scatter(x=[0,1], y=[0,1], mode='lines', name='Random', line=dict(dash='dash')))
-    fig_roc.update_layout(title='ROC Curve', xaxis_title='False Positive Rate', yaxis_title='True Positive Rate')
-    st.plotly_chart(fig_roc, use_container_width=True)
-    st.markdown("#### Predict on new uploaded data (without target variable)")
-    uploaded_pred = st.file_uploader("Upload CSV for prediction (no Paid Subscription column)", type="csv", key="pred")
-    if uploaded_pred:
-        try:
-            pred_df = pd.read_csv(uploaded_pred)
-            for col in X.columns:
-                if col in pred_df.columns and col in le_dict:
-                    pred_df[col] = le_dict[col].transform(pred_df[col].astype(str))
-            pred_scaled = scaler.transform(pred_df[X.columns])
-            pred = models[algo].predict(pred_scaled)
-            pred_df["Predicted Subscription"] = np.where(pred==1, "Yes", "No")
-            st.success("Prediction successful! Preview below.")
-            st.dataframe(pred_df.head(), use_container_width=True)
-            csv = pred_df.to_csv(index=False)
-            st.download_button("Download Predictions", csv, "predicted_results.csv", "text/csv")
-        except Exception as e:
-            st.error(f"Prediction failed: {e}")
-
-# === 4. CLUSTERING TAB ===
-with tabs[3]:
-    st.header("👥 K-Means Clustering & Customer Personas")
-    st.info("Segment users and discover clusters (personas). Adjust the number of clusters with the slider.")
-    clust_df = df.copy()
-    persona_cols = ['Age', 'Gender', 'Monthly Income', 'Occupation', 'Courses Taken Last Year', 'Device']
-    for col in persona_cols:
-        if clust_df[col].dtype == 'object':
-            clust_df[col] = LabelEncoder().fit_transform(clust_df[col].astype(str))
-    clust_data = clust_df[persona_cols]
-    k = st.slider("Select number of clusters", 2, 10, 4)
-    kmeans = KMeans(n_clusters=k, random_state=0, n_init=10)
-    clust_labels = kmeans.fit_predict(clust_data)
-    clust_df['Cluster'] = clust_labels
-    wcss = []
-    for i in range(2, 11):
-        km = KMeans(n_clusters=i, random_state=0, n_init=10)
-        km.fit(clust_data)
-        wcss.append(km.inertia_)
-    elbow_fig = go.Figure()
-    elbow_fig.add_trace(go.Scatter(x=list(range(2,11)), y=wcss, mode='lines+markers'))
-    elbow_fig.update_layout(title="Elbow Chart (Choose best k)", xaxis_title="Number of clusters", yaxis_title="WCSS (Inertia)")
-    st.plotly_chart(elbow_fig, use_container_width=True)
-    st.markdown("#### Customer Personas (Cluster Centers)")
-    personas = pd.DataFrame(kmeans.cluster_centers_, columns=persona_cols)
-    st.dataframe(personas.round(2), use_container_width=True)
-    st.markdown("Download full data with cluster labels:")
-    st.download_button("Download Clustered Data", clust_df.to_csv(index=False), "clustered_data.csv", "text/csv")
-
-# === 5. ASSOCIATION RULE MINING TAB ===
+# ===== 5. CLUSTERING =====
 with tabs[4]:
-    st.header("🔗 Association Rule Mining (Apriori)")
-    st.info("Mine multi-select survey fields for patterns! Use the sliders for support/confidence. Filter by columns.")
-    multi_cols = ['Motivation', 'Learning Goals', 'Preferred Subjects', 'Preferred App Features', 'Selection Factors', 'Learning Challenges', 'Non-Subscription Reasons', 'Features Used Most', 'Other Apps Used']
-    col_options = st.multiselect("Select 2+ columns to mine associations:", multi_cols, default=["Motivation", "Learning Challenges"])
-    support = st.slider("Min support:", 0.01, 0.2, 0.05)
-    confidence = st.slider("Min confidence:", 0.2, 1.0, 0.6)
-    if len(col_options) >= 2:
-        baskets = []
-        for idx, row in df[col_options].iterrows():
-            items = set()
-            for col in col_options:
-                for opt in str(row[col]).split(','):
-                    opt = opt.strip()
-                    if opt and opt.lower() not in ['none', 'unknown']:
-                        items.add(f"{col}:{opt}")
-            baskets.append(list(items))
-        from mlxtend.preprocessing import TransactionEncoder
-        te = TransactionEncoder()
-        te_ary = te.fit(baskets).transform(baskets)
-        basket_df = pd.DataFrame(te_ary, columns=te.columns_)
-        freq = apriori(basket_df, min_support=support, use_colnames=True)
-        rules = association_rules(freq, metric="confidence", min_threshold=confidence)
-        rules = rules.sort_values("confidence", ascending=False).head(10)
-        if not rules.empty:
-            rules_disp = rules[['antecedents', 'consequents', 'support', 'confidence', 'lift']].copy()
-            rules_disp['antecedents'] = rules_disp['antecedents'].apply(lambda x: ', '.join([str(i) for i in x]))
-            rules_disp['consequents'] = rules_disp['consequents'].apply(lambda x: ', '.join([str(i) for i in x]))
-            st.dataframe(rules_disp, use_container_width=True)
-        else:
-            st.warning("No rules found for selected columns/support/confidence.")
+    st.header("👥 Clustering")
+    st.info("Segment customers. Adjust number of clusters.")
+    cdf = df.copy()
+    cols = ['Age', 'Gender', 'Monthly Income', 'Occupation', 'Courses Taken Last Year', 'Device']
+    for c in cols:
+        cdf[c] = LabelEncoder().fit_transform(cdf[c].astype(str))
+    k = st.slider("Number of clusters", 2, 10, 4)
+    km = KMeans(n_clusters=k, random_state=0, n_init=10).fit(cdf[cols])
+    cdf['Cluster'] = km.labels_
+    inertias = [KMeans(n_clusters=i, random_state=0, n_init=10).fit(cdf[cols]).inertia_ for i in range(2, 11)]
+    st.plotly_chart(px.line(x=list(range(2, 11)), y=inertias, title="Elbow Chart", markers=True, template=tpl), use_container_width=True)
+    centers = pd.DataFrame(km.cluster_centers_, columns=cols)
+    st.dataframe(centers.round(2))
+    st.download_button("Download Clustered Data", cdf.to_csv(index=False), "clustered.csv", "text/csv")
 
-# === 6. REGRESSION INSIGHTS TAB ===
+# ===== 6. ASSOCIATION RULES =====
 with tabs[5]:
-    st.header("📈 Regression: Spend, Satisfaction & More")
-    st.info("Predict spend and satisfaction using multiple regression models. Useful for pricing and experience optimization.")
-    reg_df = df.copy()
-    target_map = {
-        "Willingness to Spend": ("Willingness to Spend", {'<10':1, '10-20':2, '20-50':3, '50-100':4, '>100':5}),
-        "Satisfaction Level": ("Satisfaction Level", None)
-    }
-    reg_target = st.selectbox("Choose regression target:", list(target_map.keys()))
-    target_col, mapping = target_map[reg_target]
-    reg_y = reg_df[target_col]
-    if mapping:
-        reg_y = reg_y.map(mapping)
-    reg_features = ['Age', 'Gender', 'Education', 'Monthly Income', 'Occupation', 'Device', 'Internet Quality', 'Courses Taken Last Year', 'App Comfort Level']
-    for col in reg_features:
-        if reg_df[col].dtype == 'object':
-            reg_df[col] = LabelEncoder().fit_transform(reg_df[col].astype(str))
-    reg_X = reg_df[reg_features]
-    X_train, X_test, y_train, y_test = train_test_split(reg_X, reg_y, test_size=0.25, random_state=42)
-    scaler = StandardScaler()
-    X_train_scaled = scaler.fit_transform(X_train)
-    X_test_scaled = scaler.transform(X_test)
-    reg_models = {
-        "Linear Regression": LinearRegression(),
-        "Ridge Regression": Ridge(alpha=1.0),
-        "Lasso Regression": Lasso(alpha=0.01),
-        "Decision Tree": DecisionTreeRegressor(max_depth=6, random_state=0)
-    }
-    reg_results = {}
-    preds = {}
-    for name, model in reg_models.items():
-        model.fit(X_train_scaled, y_train)
-        y_pred = model.predict(X_test_scaled)
-        reg_results[name] = {
-            "Train R2": model.score(X_train_scaled, y_train),
-            "Test R2": model.score(X_test_scaled, y_test)
-        }
-        preds[name] = y_pred
-    st.dataframe(pd.DataFrame(reg_results).T.round(3), use_container_width=True)
-    st.markdown("#### Actual vs Predicted (Test set)")
-    for name, y_pred in preds.items():
-        fig = px.scatter(x=y_test, y=y_pred, labels={'x':"Actual", 'y':"Predicted"}, title=f"{name}: Actual vs Predicted")
-        st.plotly_chart(fig, use_container_width=True)
-        st.caption(f"{name}: Points along diagonal indicate good fit. Use R² above to compare models.")
-    st.markdown("#### Feature Importances (Tree-based Models)")
-    for name in ["Decision Tree"]:
-        imp = reg_models[name].feature_importances_
-        fig = px.bar(x=reg_features, y=imp, title=f"{name} Feature Importances")
-        st.plotly_chart(fig, use_container_width=True)
-        st.caption(f"{name}: Higher bars indicate more impact on prediction.")
+    st.header("🔗 Association Rules")
+    st.info("Mine top-10 rules from multi-select questions.")
+    multi_cols = ['Motivation', 'Learning Goals', 'Preferred Subjects', 'Preferred App Features',
+                  'Selection Factors', 'Learning Challenges', 'Non-Subscription Reasons',
+                  'Features Used Most', 'Other Apps Used']
+    sel_cols = st.multiselect("Select columns", multi_cols, default=multi_cols[:2])
+    sup = st.slider("Min Support", 0.01, 0.2, 0.05)
+    conf = st.slider("Min Confidence", 0.2, 1.0, 0.6)
+    if len(sel_cols) >= 2:
+        transactions = []
+        for _, row in df[sel_cols].iterrows():
+            items = set()
+            for col in sel_cols:
+                for v in str(row[col]).split(','):
+                    vv = v.strip()
+                    if vv and vv.lower() != 'none':
+                        items.add(f"{col}:{vv}")
+            transactions.append(list(items))
+        from mlxtend.preprocessing import TransactionEncoder
+        te = TransactionEncoder().fit(transactions)
+        df_te = pd.DataFrame(te.transform(transactions), columns=te.columns_)
+        freq = apriori(df_te, min_support=sup, use_colnames=True)
+        rules = association_rules(freq, metric="confidence", min_threshold=conf).sort_values('confidence', ascending=False).head(10)
+        rules['antecedents'] = rules['antecedents'].apply(lambda x: ", ".join(x))
+        rules['consequents'] = rules['consequents'].apply(lambda x: ", ".join(x))
+        st.dataframe(rules[['antecedents', 'consequents', 'support', 'confidence', 'lift']])
+    else:
+        st.warning("Select at least 2 columns to run association rules.")
 
-# === 7. FEEDBACK FORM ===
+# ===== 7. REGRESSION =====
 with tabs[6]:
-    st.header("💬 Feedback & Suggestions")
-    st.write("We value your suggestions! Help us improve EduNest and this analytics dashboard.")
-    feedback = st.text_area("Your suggestions or feedback:", max_chars=600)
+    st.header("📈 Regression")
+    st.info("Run and compare regression models.")
+    targets = {"Spend": "Willingness to Spend", "Satisfaction": "Satisfaction Level"}
+    choice = st.selectbox("Select target", list(targets.keys()))
+    ycol = targets[choice]
+    if ycol == "Willingness to Spend":
+        y = df[ycol].map({'<10': 1, '10-20': 2, '20-50': 3, '50-100': 4, '>100': 5})
+    else:
+        y = df[ycol]
+    X = df[['Age', 'Gender', 'Education', 'Monthly Income', 'Occupation', 'Device',
+            'Internet Quality', 'Courses Taken Last Year', 'App Comfort Level']].copy()
+    for c in X.select_dtypes(include='object'):
+        X[c] = LabelEncoder().fit_transform(X[c].astype(str))
+    X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.25, random_state=42)
+    sc = StandardScaler()
+    X_train_s, X_test_s = sc.fit_transform(X_train), sc.transform(X_test)
+    regmods = {
+        "Linear": LinearRegression(),
+        "Ridge": Ridge(),
+        "Lasso": Lasso(alpha=0.01),
+        "Tree": DecisionTreeRegressor(max_depth=6, random_state=0)
+    }
+    out, preds = {}, {}
+    for name, model in regmods.items():
+        model.fit(X_train_s, y_train)
+        p = model.predict(X_test_s)
+        out[name] = {"Train R2": model.score(X_train_s, y_train), "Test R2": model.score(X_test_s, y_test)}
+        preds[name] = p
+    st.dataframe(pd.DataFrame(out).T.round(3))
+    for name, p in preds.items():
+        st.plotly_chart(px.scatter(x=y_test, y=p, labels={'x': 'Actual', 'y': 'Predicted'},
+                                   title=f"{name} Actual vs Predicted", template=tpl), use_container_width=True)
+    imp = regmods["Tree"].feature_importances_
+    st.plotly_chart(px.bar(x=X.columns, y=imp, title="Tree Feature Importances", template=tpl), use_container_width=True)
+
+# ===== 8. DOWNLOAD PPT SUMMARY =====
+with tabs[7]:
+    st.header("📥 Download PPT Summary")
+    bullets = [
+        f"Subscription Rate: {sub_rate:.1f}%",
+        f"Avg Satisfaction: {df['Satisfaction Level'].mean():.2f}/5",
+        f"Avg Comfort Level: {df['App Comfort Level'].mean():.2f}/5",
+        f"Top Device Used: {df['Device'].mode()[0]}"
+    ]
+    if st.button("Generate & Download PPT"):
+        prs = Presentation()
+        slide = prs.slides.add_slide(prs.slide_layouts[1])
+        slide.shapes.title.text = "EduNest Executive Summary"
+        tf = slide.shapes.placeholders[1].text_frame
+        for b in bullets:
+            p = tf.add_paragraph()
+            p.text = b
+            p.level = 1
+        ppt_io = io.BytesIO()
+        prs.save(ppt_io)
+        ppt_io.seek(0)
+        st.download_button("Download PPT", ppt_io, "EduNest_Summary.pptx",
+                           "application/vnd.openxmlformats-officedocument.presentationml.presentation")
+
+# ===== 9. FEEDBACK =====
+with tabs[8]:
+    st.header("💬 Feedback")
+    fb = st.text_area("Enter your suggestions or comments:")
     if st.button("Submit Feedback"):
         st.success("Thank you for your feedback!")
+        webhook = st.secrets.get("slack_webhook_url")
+        if webhook and fb:
+            try:
+                requests.post(webhook, json={"text": f"New feedback: {fb}"})
+            except:
+                st.warning("Failed to send feedback to Slack.")
 
+# ---- FINAL TAGLINE & PERFORMANCE ----
 st.markdown("---")
-st.markdown("Made with ❤️ using Streamlit | For MBA Data Analytics & Stakeholder Demo | EduNest © 2025")
+st.markdown(
+    "<div style='text-align:center; color:#777; font-size:14px;'>"
+    "MBA Data Analytics for Insights & Decision Making Project • Team Subhayu | Unlocking end-to-end learner insights"
+    "</div>",
+    unsafe_allow_html=True
+)
+st.caption(f"Dashboard generated in {time.time() - start_time:.2f}s")
