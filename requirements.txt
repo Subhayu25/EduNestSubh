@@ -2,8 +2,7 @@ streamlit
 pandas
 numpy
 scikit-learn
-matplotlib
-seaborn
 plotly
 mlxtend
-faker
+python-pptx
+requests
