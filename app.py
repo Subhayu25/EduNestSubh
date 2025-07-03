@@ -261,33 +261,66 @@ with tabs[4]:
 # ===== 6. ASSOCIATION RULES =====
 with tabs[5]:
     st.header("🔗 Association Rule Mining")
-    st.info("Discover top-10 rules from multi-select columns.")
-    multi_cols = ['Motivation','Learning Goals','Preferred Subjects','Preferred App Features',
-                  'Selection Factors','Learning Challenges','Non-Subscription Reasons',
-                  'Features Used Most','Other Apps Used']
-    sel_cols = st.multiselect("Columns", multi_cols, default=multi_cols[:2])
-    sup = st.slider("Min Support", 0.01, 0.2, 0.05)
-    conf = st.slider("Min Confidence", 0.2, 1.0, 0.6)
-    if len(sel_cols) >= 2:
-        transactions = []
-        for _, row in df[sel_cols].iterrows():
-            items = set()
-            for col in sel_cols:
-                for v in str(row[col]).split(','):
-                    vv = v.strip()
-                    if vv and vv.lower() != 'none':
-                        items.add(f"{col}:{vv}")
-            transactions.append(list(items))
-        from mlxtend.preprocessing import TransactionEncoder
-        te = TransactionEncoder().fit(transactions)
-        df_te = pd.DataFrame(te.transform(transactions), columns=te.columns_)
-        freq = apriori(df_te, min_support=sup, use_colnames=True)
-        rules = association_rules(freq, metric="confidence", min_threshold=conf).sort_values('confidence', ascending=False).head(10)
-        rules['antecedents'] = rules['antecedents'].apply(lambda x: ", ".join(x))
-        rules['consequents'] = rules['consequents'].apply(lambda x: ", ".join(x))
-        st.dataframe(rules[['antecedents','consequents','support','confidence','lift']])
+    st.info("Discover top-10 rules from multi-select questions.")
+
+    # Define the universe of possible multi-select columns
+    multi_cols = [
+        'Motivation',
+        'Learning Goals',
+        'Preferred Subjects',
+        'Preferred App Features',
+        'Selection Factors',
+        'Learning Challenges',
+        'Non-Subscription Reasons',
+        'Features Used Most',
+        'Other Apps Used'
+    ]
+
+    # Only keep those that actually exist in df
+    available_cols = [c for c in multi_cols if c in df.columns]
+    if not available_cols:
+        st.warning("⚠️ No multi-select columns found in the dataset for association mining.")
     else:
-        st.warning("Select at least 2 columns.")
+        sel_cols = st.multiselect(
+            "Select columns for association analysis",
+            available_cols,
+            default=available_cols[:2]
+        )
+
+        min_support = st.slider("Min Support", 0.01, 0.2, 0.05)
+        min_confidence = st.slider("Min Confidence", 0.2, 1.0, 0.6)
+
+        if sel_cols:
+            # Build transaction list
+            transactions = []
+            for _, row in df[sel_cols].iterrows():
+                items = set()
+                for col in sel_cols:
+                    for val in str(row[col]).split(','):
+                        v = val.strip()
+                        if v and v.lower() != 'none':
+                            items.add(f"{col}:{v}")
+                transactions.append(list(items))
+
+            from mlxtend.preprocessing import TransactionEncoder
+            te = TransactionEncoder().fit(transactions)
+            df_te = pd.DataFrame(te.transform(transactions), columns=te.columns_)
+
+            # Run Apriori + rules
+            freq = apriori(df_te, min_support=min_support, use_colnames=True)
+            rules = association_rules(freq, metric="confidence", min_threshold=min_confidence)
+            if rules.empty:
+                st.info("No rules found with the given support/confidence thresholds.")
+            else:
+                rules = rules.sort_values('confidence', ascending=False).head(10)
+                rules['antecedents'] = rules['antecedents'].apply(lambda x: ", ".join(x))
+                rules['consequents'] = rules['consequents'].apply(lambda x: ", ".join(x))
+                st.dataframe(
+                    rules[['antecedents', 'consequents', 'support', 'confidence', 'lift']],
+                    use_container_width=True
+                )
+        else:
+            st.warning("Select at least one column to run association rule mining.")
 
 # ===== 7. REGRESSION =====
 with tabs[6]:
