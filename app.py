@@ -181,64 +181,102 @@ with tabs[2]:
 with tabs[3]:
     st.header("🧩 Classification Models")
     st.info("Predict Paid Subscription. Upload new data to predict.")
+
+    # Make a copy and drop non-feature columns (including Timestamp!)
     clf = df.copy().fillna("Unknown")
-    drops = ["Country","City","Non-Subscription Reasons","Features Used Most","Other Apps Used",
-             "Motivation","Learning Goals","Preferred Subjects","Preferred App Features",
-             "Selection Factors","Learning Challenges"]
-    clf.drop(columns=[c for c in drops if c in clf], inplace=True)
-    le_map = {}
-    for col in clf.select_dtypes(include='object'):
+    drops = [
+        "Timestamp",                       # <— drop the datetime!
+        "Country", "City",
+        "Non-Subscription Reasons",
+        "Features Used Most",
+        "Other Apps Used",
+        "Motivation",
+        "Learning Goals",
+        "Preferred Subjects",
+        "Preferred App Features",
+        "Selection Factors",
+        "Learning Challenges"
+    ]
+    clf.drop(columns=[c for c in drops if c in clf.columns], inplace=True)
+
+    # Encode every remaining object column (except the target)
+    encoders = {}
+    for col in clf.select_dtypes(include="object"):
         if col != "Paid Subscription":
             le = LabelEncoder()
             clf[col] = le.fit_transform(clf[col].astype(str))
-            le_map[col] = le
-    clf["Paid Subscription"] = (clf["Paid Subscription"]=="Yes").astype(int)
+            encoders[col] = le
+
+    # Binarize the target
+    clf["Paid Subscription"] = (clf["Paid Subscription"] == "Yes").astype(int)
+
+    # Split features & label
     X = clf.drop("Paid Subscription", axis=1)
     y = clf["Paid Subscription"]
-    X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.25, random_state=42)
+    X_train, X_test, y_train, y_test = train_test_split(X, y,
+                                                        test_size=0.25,
+                                                        random_state=42)
+
+    # Scale
     scaler = StandardScaler()
-    X_train_s, X_test_s = scaler.fit_transform(X_train), scaler.transform(X_test)
+    X_train_s = scaler.fit_transform(X_train)
+    X_test_s  = scaler.transform(X_test)
+
+    # Fit and evaluate
     models = {
         "KNN": KNeighborsClassifier(),
         "Decision Tree": DecisionTreeClassifier(max_depth=6, random_state=0),
         "Random Forest": RandomForestClassifier(n_estimators=60, random_state=0),
-        "GBRT": GradientBoostingClassifier(n_estimators=60, random_state=0)
+        "GBRT": GradientBoostingClassifier(n_estimators=60, random_state=0),
     }
     results = {}
     probs = {}
     for name, model in models.items():
         model.fit(X_train_s, y_train)
-        pred = model.predict(X_test_s)
-        prob = model.predict_proba(X_test_s)[:,1]
+        preds = model.predict(X_test_s)
         results[name] = {
             "Train Acc": accuracy_score(y_train, model.predict(X_train_s)),
-            "Test Acc": accuracy_score(y_test, pred),
-            "Precision": precision_score(y_test, pred),
-            "Recall": recall_score(y_test, pred),
-            "F1": f1_score(y_test, pred)
+            "Test Acc":  accuracy_score(y_test, preds),
+            "Precision": precision_score(y_test, preds),
+            "Recall":    recall_score(y_test, preds),
+            "F1":        f1_score(y_test, preds),
         }
-        probs[name] = prob
+        probs[name] = model.predict_proba(X_test_s)[:, 1]
+
     st.dataframe(pd.DataFrame(results).T.round(3))
+
+    # Confusion matrix toggle
     sel = st.selectbox("Confusion Matrix", list(models.keys()))
     cm = confusion_matrix(y_test, models[sel].predict(X_test_s))
-    st.plotly_chart(px.imshow(cm, text_auto=True, labels=dict(x="Pred",y="True"),
-                              title=f"{sel} Confusion Matrix", template=tpl), use_container_width=True)
+    st.plotly_chart(
+        px.imshow(cm, text_auto=True,
+                  labels=dict(x="Predicted", y="Actual"),
+                  title=f"{sel} Confusion Matrix",
+                  template=tpl),
+        use_container_width=True,
+    )
+
+    # ROC curves
     roc_fig = go.Figure()
     for name, p in probs.items():
         fpr, tpr, _ = roc_curve(y_test, p)
-        roc_fig.add_trace(go.Scatter(x=fpr, y=tpr, mode='lines', name=name))
-    roc_fig.add_trace(go.Scatter(x=[0,1], y=[0,1], mode='lines', name='Random', line=dict(dash='dash')))
+        roc_fig.add_trace(go.Scatter(x=fpr, y=tpr, mode="lines", name=name))
+    roc_fig.add_trace(go.Scatter(x=[0,1], y=[0,1], mode="lines",
+                                 name="Random", line=dict(dash="dash")))
     st.plotly_chart(roc_fig, use_container_width=True)
+
+    # Upload new data to score
     up = st.file_uploader("Upload CSV to Predict", type="csv", key="pred")
     if up:
         pdf = pd.read_csv(up)
-        for col, le in le_map.items():
-            if col in pdf:
+        for col, le in encoders.items():
+            if col in pdf.columns:
                 pdf[col] = le.transform(pdf[col].astype(str))
         p_s = scaler.transform(pdf[X.columns])
         pdf["Predicted Subscription"] = np.where(models[sel].predict(p_s)==1, "Yes", "No")
         st.dataframe(pdf.head())
-        st.download_button("Download Predictions", pdf.to_csv(index=False), "predictions.csv", "text/csv")
+        st.download_button("Download Predictions", pdf.to_csv(index=False),
+                           "predictions.csv", "text/csv")
 
 # ===== 5. CLUSTERING =====
 with tabs[4]:
